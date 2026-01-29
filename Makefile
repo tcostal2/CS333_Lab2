@@ -3,12 +3,12 @@ CFLAGS = -Wall -Wextra -Wshadow -Wunreachable-code -Wredundant-decls  -Wmissing-
 -Wmissing-prototypes -Wdeclaration-after-statement \
 -Wno-return-local-addr -Wunsafe-loop-optimizations -Wuninitialized -Werror -g3
 
-CC = gcc 
-PROG = tarasaur 
+CC = gcc
+PROG = tarasaur
 
 all: $(PROG)
 
-$(PROG): $(PROG).o 
+$(PROG): $(PROG).o
 	$(CC) $(CFLAGS) -o $@ $^ -lz
 
 $(PROG).o: $(PROG).c
