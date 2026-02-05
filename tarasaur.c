@@ -44,7 +44,6 @@ int main(int argc, char *argv[]){
 					exit(INVALID_CMD_OPTION);
 				}
 				action  = ACTION_TOC_SHORT;
-				fprintf(stderr, "action is toggled to: %d\n", action);
 				break;
 			case 'T':
 				if(action != ACTION_NONE){
@@ -62,12 +61,6 @@ int main(int argc, char *argv[]){
 				break;
 			case 'f':
 				filename = optarg;
-				if(filename){
-					fprintf(stderr, "filenameset to: %s\n", filename);
-				}
-				else{
-					fprintf(stderr, "no filename\n");
-				}
 				break;
 			case 'h':
 				fprintf(stderr, "list of helpful things\n");
@@ -125,6 +118,7 @@ int main(int argc, char *argv[]){
 			}
 			lseek(iarch, data_size, SEEK_CUR);
 		}
+		printf("Reading archive file: %s\n", filename);
 		if(filename){
 			printf("Table of contents of tarannosaurus file:"
 					"\"%s\" with %d members\n",
