@@ -25,50 +25,38 @@ int main(int argc, char *argv[]){
 	while ((opt = getopt(argc, argv, TARASAUR_OPTIONS)) != -1){
 		switch (opt) {
 			case 'x':
-				if(action != ACTION_NONE){
-					fprintf(stderr, "multiple actions selected\n");
-					exit(INVALID_CMD_OPTION);
-				}
 				action = ACTION_EXTRACT;
 				break;
 			case 'c':
-				if(action != ACTION_NONE){
-					fprintf(stderr, "multiple actions selected\n");
-					exit(INVALID_CMD_OPTION);
-				}
 				action = ACTION_CREATE;
 				break;
 			case 't':
-				if(action != ACTION_NONE){
-					fprintf(stderr, "multiple actions selected\n");
-					exit(INVALID_CMD_OPTION);
-				}
 				action  = ACTION_TOC_SHORT;
 				break;
 			case 'T':
-				if(action != ACTION_NONE){
-					fprintf(stderr, "multiple actions selected\n");
-					exit(INVALID_CMD_OPTION);
-				}
 				action = ACTION_TOC_LONG;
 				break;
 			case 'V':
-				if(action != ACTION_NONE){
-					fprintf(stderr, "multiple actions selected\n");
-					exit(INVALID_CMD_OPTION);
-				}
 				action = ACTION_VALIDATE;
 				break;
 			case 'f':
 				filename = optarg;
 				break;
 			case 'h':
-				fprintf(stderr, "list of helpful things\n");
+				printf("Usage: tarasaur -[cxtTVf:vh] archive-file file...\n");
+				printf("\t-c\tcreate a new archive file\n");
+				printf("\t-x\textract members from an existing archive file\n");
+				printf("\t-t\tshort table of contents of archive file\n");
+				printf("\t-T\tlong table of contents of archive file\n");
+				printf("\t-V\tvalidate the checksum/hash values\n");
+				printf("\t-f filename\tname of archive file to use\n");
+				printf("\t-v\tverbose output\n");
+				printf("\t-h\tshow help text\n");
+						
 				exit(EXIT_SUCCESS);
 				break;
 			case 'v':
 				is_verbose = true;
-				fprintf(stderr, "verbose is set to: %d\n", is_verbose);
 				break;
 			default:
 				fprintf(stderr, "invalid option\n");
@@ -106,7 +94,7 @@ int main(int argc, char *argv[]){
 		fprintf(stderr, "version mismatch 2\n");
 		exit(BAD_MAGIC);
 	}
-	//read the datamembers 
+	//small TOC reading  
 	if(action == ACTION_TOC_SHORT){
 		read(iarch, &num_members, sizeof(num_members));
 
@@ -118,9 +106,9 @@ int main(int argc, char *argv[]){
 			}
 			lseek(iarch, data_size, SEEK_CUR);
 		}
-		printf("Reading archive file: %s\n", filename);
 		if(filename){
-			printf("Table of contents of tarannosaurus file:"
+			if(is_verbose) {printf("Reading archive file: " " %s\n", filename);}
+			printf("Table of contents of tarannosaurus file: "
 					"\"%s\" with %d members\n",
 					filename,
 					num_members);
