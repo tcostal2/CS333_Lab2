@@ -10,8 +10,11 @@
 #include <pwd.h>
 #include <grp.h>
 #include <time.h>
+#include <zlib.h>
 
 #include "tarasaur.h"
+
+#define COPY_BUF_SIZE 8192
 
 int main(int argc, char *argv[]){
 	
@@ -76,12 +79,96 @@ int main(int argc, char *argv[]){
 		fprintf(stderr, "no action selected\n");
 		exit(NO_ACTION_GIVEN);
 	}
+	//create archive
+	if(action == ACTION_CREATE){
+		int member_cnt;
+		int mem_fd;
+		int fd;
+		const char* mem_name;
+		size_t data_size;
+		struct stat st;
+		ssize_t n;
+		unsigned char buffer[COPY_BUF_SIZE];
+		off_t data_offset;
+		uint32_t crc_data;
+		char* members[argc];
+		tarasaur_directory_t head;
+		tarasaur_directory_t temp;
+
+		version = TARASAUR_VERSION;
+		member_cnt = argc-optind;
+		if(filename){
+			fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0664);
+			if(fd < 0){
+				perror("open");
+				exit(CREATE_FAIL);
+			}
+		}
+		else{
+			fd = STDOUT_FILENO;
+		}
+		//write the header, version, member count
+		write(fd, TARASAUR_MAGIC_NUMBER, strlen(TARASAUR_MAGIC_NUMBER));
+		write(fd, &version, sizeof(version));
+		write(fd, &member_cnt, sizeof(member_cnt));
+		for (int i = optind; i < argc; ++i){
+
+			mem_name = argv[i];
+			mem_fd = open(mem_name, O_RDONLY);
+			if(mem_fd < 0){
+				perror(mem_name);
+				exit(CREATE_FAIL);
+			}
+			if(fstat(mem_fd, &st) <0) {perror("fstat"); exit(CREATE_FAIL);}
+			data_size = (size_t)st.st_size;
+
+			//write the file size and offset
+			write(fd, &data_size, sizeof(data_size));
+			data_offset = lseek(fd, 0, SEEK_CUR);
+			//copy data members
+			crc_data = crc32(0L, Z_NULL, 0);
+			while((n= read(mem_fd, buffer, sizeof(buffer))) > 0) {
+				crc_data = crc32(crc_data, buffer, (uInt)n);
+				if(write(fd, buffer, n) != n){
+					perror("write");
+					exit(CREATE_FAIL);
+				}
+			}
+			if(n <0){
+				perror("read");
+				exit(CREATE_FAIL);
+			}
+			if(is_verbose){
+				fprintf(stderr, "added: %s\n", mem_name);
+			}
+			memset(&head, 0, sizeof(head));
+			strncpy(head.tarasaur_name, mem_name, TARASAUR_MAX_NAME_LEN -1);
+			head.tarasaur_size = data_size;
+			head.tarasaur_mode = st.st_mode;
+			head.tarasaur_uid = st.st_uid;
+			head.tarasaur_gid = st.st_gid;
+			head.tarasaur_atim = st.st_atim;
+			head.tarasaur_mtim = st.st_mtim;
+			head.tarasaur_data_offset = data_offset;
+			head.crc32_data = crc_data;
+			temp = head;
+			temp.crc32_data = 0;
+			temp.crc32_header = 0;
+			head.crc32_header = crc32(0L, (const Bytef *)&temp, (uInt)sizeof(temp));
+			write(fd, &head, sizeof(head));
+
+
+			close(mem_fd);
+
+		}
+
+	}
 	//if theres a filename set it to iarch
 	if(filename){
 		iarch = open(filename, O_RDONLY);
 		if (iarch < 0){
 			fprintf(stderr, "error msg 0\n");
-			exit(EXIT_FAILURE);
+			exit(CREATE_FAIL);
 		}
 	}
 	else{
@@ -100,7 +187,7 @@ int main(int argc, char *argv[]){
 		fprintf(stderr, "version mismatch 2\n");
 		exit(BAD_MAGIC);
 	}
-	//small TOC reading  
+	//small TOC and large TOC reading  
 	if(action == ACTION_TOC_SHORT || action == ACTION_TOC_LONG){
 		read(iarch, &num_members, sizeof(num_members));
 
@@ -133,7 +220,7 @@ int main(int argc, char *argv[]){
 			//logic for large TOC 
 			if(action == ACTION_TOC_LONG){
 				//file permissions
-				printf("\tmode:\t" );
+				printf("\t\tmode:\t" );
 				printf("%c", S_ISDIR(header.tarasaur_mode) ? 'd' : '-');
 				printf("%c", (header.tarasaur_mode & S_IRUSR) ? 'r' : '-');
 				printf("%c", (header.tarasaur_mode & S_IWUSR) ? 'w' : '-');
@@ -142,7 +229,7 @@ int main(int argc, char *argv[]){
 				printf("%c", (header.tarasaur_mode & S_IRGRP) ? 'r' : '-');
 				printf("%c", (header.tarasaur_mode & S_IWGRP) ? 'w' : '-');
 				printf("%c", (header.tarasaur_mode & S_IXGRP) ? 'x' : '-');
-				
+
 				printf("%c", (header.tarasaur_mode & S_IROTH) ? 'r' : '-');
 				printf("%c", (header.tarasaur_mode & S_IWOTH) ? 'w' : '-');
 				printf("%c", (header.tarasaur_mode & S_IXOTH) ? 'x' : '-');
@@ -150,23 +237,23 @@ int main(int argc, char *argv[]){
 				//userID
 				userid = getpwuid(header.tarasaur_uid);
 				if(userid == NULL) {printf("\tuser: \t%d\n", header.tarasaur_uid);}
-				printf("\tuser: \t%s\n", userid->pw_name);
+				printf("\t\tuser:\t\t%s\n", userid->pw_name);
 				//group
 				groupid = getgrgid(header.tarasaur_gid);
 				if(groupid == NULL) {printf("\tgroup: \t%d\n", header.tarasaur_gid);}
-				printf("\tgroup: \t%s\n", groupid->gr_name);
+				printf("\t\tgroup:\t\t%s\n", groupid->gr_name);
 				//size
-				printf("\tsize: \t%zu\n", header.tarasaur_size);
+				printf("\t\tsize:\t\t%zu\n", header.tarasaur_size);
 				//mtime and atime
 				tm_mtime = localtime(&header.tarasaur_mtim.tv_sec);
 				strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S %Z", tm_mtime);
-				printf("\tmtime: \t%s\n", time_buf);
+				printf("\t\tmtime:\t\t%s\n", time_buf);
 				tm_atime = localtime(&header.tarasaur_atim.tv_sec);
 				strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S %Z", tm_atime);
-				printf("\tatime: \t%s\n", time_buf);
+				printf("\t\tatime:\t\t%s\n", time_buf);
 				//crc32 checksums
-				printf("\tchecksum header: \t0x%08x\n", header.crc32_header);
-				printf("\tchecksum header: \t0x%08x\n", header.crc32_data);
+				printf("\t\tcrc32 header:\t\t0x%08x\n", header.crc32_header);
+				printf("\t\tcrc32 data:\t\t0x%08x\n", header.crc32_data);
 
 			}
 		}
