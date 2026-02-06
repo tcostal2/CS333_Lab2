@@ -15,6 +15,18 @@
 #include "tarasaur.h"
 
 #define COPY_BUF_SIZE 8192
+struct node {
+	tarasaur_directory_t hdr;
+	struct node* next;
+}node;
+
+static void free_list(struct node* head){
+	while(head){
+		struct node* temp = head;
+		head = head->next;
+		free(temp);
+	}
+}
 
 int main(int argc, char *argv[]){
 	
@@ -150,12 +162,21 @@ int main(int argc, char *argv[]){
 			//copy data members
 			crc_data = crc32(0L, Z_NULL, 0);
 			while((n= read(mem_fd, buffer, sizeof(buffer))) > 0) {
+				ssize_t total =0;
 				crc_data = crc32(crc_data, buffer, (uInt)n);
-				if(write(fd, buffer, n) != n){
+				while(total < n){
+					ssize_t w =write(fd, buffer + total, n - total);
+					if(w <= 0) {
 					perror("write");
 					exit(CREATE_FAIL);
+					}
+					total += w;
+					out += w;
 				}
-				out += n;
+				if (n < 0){
+					perror("read");
+					exit(CREATE_FAIL);
+				}
 			}
 			if(n <0){
 				perror("read");
@@ -186,7 +207,9 @@ int main(int argc, char *argv[]){
 			write(fd, &headers[i], sizeof(headers[i]));
 			out += sizeof(headers[i]);
 		}
-		//close(fd);
+		close(fd);
+		free(headers);
+		free(members);
 		exit(EXIT_SUCCESS);
 
 	}
@@ -215,6 +238,93 @@ int main(int argc, char *argv[]){
 			fprintf(stderr, "version mismatch 2\n");
 			exit(BAD_MAGIC);
 		}
+		
+		if(action == ACTION_VALIDATE){
+			struct node* head = NULL, *tail = NULL;
+			off_t end, start;
+
+			if(read(iarch, &num_members, sizeof(num_members)) != sizeof(num_members)){
+				if(filename) close(iarch);
+				exit(VALIDATE_ERROR);
+			}
+			end = lseek(iarch, 0, SEEK_END);
+			if(end == (off_t)-1){
+				if(filename) close(iarch);
+				exit(VALIDATE_ERROR);
+			}
+
+			start = end - (off_t)num_members* (off_t)sizeof(tarasaur_directory_t);
+			if(start <0){
+				if(filename) close(iarch);
+				exit(VALIDATE_ERROR);
+			}
+			if(lseek(iarch, start, SEEK_SET) == (off_t)-1){
+				if(filename) close(iarch);
+				exit(VALIDATE_ERROR);
+			}
+			for(int i = 0; i < num_members; i++){
+				struct node * nd = calloc(1, sizeof(*nd));
+				if(!nd){
+					free_list(head);
+					if(filename) close(iarch);
+					exit(VALIDATE_ERROR);
+				}
+				if(read(iarch, &nd->hdr, sizeof(nd->hdr)) != sizeof(nd->hdr)){
+					free(nd);
+					free_list(head);
+					if(filename) close(iarch);
+					exit(VALIDATE_ERROR);
+				}
+				if(!head) head = tail = nd;
+				else { tail->next = nd; tail = nd;}
+			}
+
+			for(struct node* cur = head; cur; cur = cur->next){
+				uint32_t crc_d, stored_hdr, crc32_hdr;
+				size_t left;
+				size_t stored_size = 0;
+				tarasaur_directory_t dir = cur->hdr;
+				if(read(iarch, &stored_size, sizeof(stored_size)) != sizeof(stored_size)){
+					free_list(head);
+					if(filename) close(iarch);
+					exit(VALIDATE_ERROR);
+				}
+				if(stored_size != dir.tarasaur_size){
+					free_list(head);
+					if(filename) close(iarch);
+					exit(VALIDATE_ERROR);
+				}
+				crc_d = crc32(0L, Z_NULL, 0);
+				left = dir.tarasaur_size;
+				while (left > 0){
+					ssize_t n = read(iarch, buf, MIN(left, COPY_BUF_SIZE));
+					if (n <= 0){
+						free_list(head);
+						if(filename) close(iarch);
+						exit(VALIDATE_ERROR);
+					}
+					crc_d = crc32(crc_d, (Bytef*)buf, (uInt)n);
+					left -= (size_t)n;
+				}
+				if(crc_d != cur->hdr.crc32_data){
+					free_list(head);
+					if(filename) close(iarch);
+					exit(VALIDATE_ERROR);
+				}
+				stored_hdr = cur->hdr.crc32_header;
+				dir.crc32_data =0;
+				dir.crc32_header =0;
+				crc32_hdr = crc32(0L, (Bytef *)&dir, (uInt)sizeof(dir));
+				if(crc32_hdr != stored_hdr){
+					free_list(head);
+					if(filename) close(iarch);
+					exit(VALIDATE_ERROR);
+				}
+			}
+		free_list(head);
+		if(filename) close(iarch);
+		}
+		
 		//small TOC and large TOC reading  
 		if(action == ACTION_TOC_SHORT || action == ACTION_TOC_LONG){
 			read(iarch, &num_members, sizeof(num_members));
@@ -290,6 +400,6 @@ int main(int argc, char *argv[]){
 			}
 		}
 	}
-
 	return EXIT_SUCCESS;
+
 }
