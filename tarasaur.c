@@ -81,7 +81,7 @@ int main(int argc, char *argv[]){
 	}
 	//create archive
 	if(action == ACTION_CREATE){
-		int member_cnt;
+		int member_cnt = 0;
 		int mem_fd;
 		int fd;
 		const char* mem_name;
@@ -94,9 +94,15 @@ int main(int argc, char *argv[]){
 		char* members[argc];
 		tarasaur_directory_t head;
 		tarasaur_directory_t temp;
+		tarasaur_directory_t headers[argc];
 
 		version = TARASAUR_VERSION;
-		member_cnt = argc-optind;
+		for (int i = optind; i < argc; ++i){
+			if(argv[i][0] != '-'){
+				members[member_cnt] = argv[i];
+				++member_cnt;
+			}
+		}
 		if(filename){
 			fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0664);
 			if(fd < 0){
@@ -107,13 +113,14 @@ int main(int argc, char *argv[]){
 		else{
 			fd = STDOUT_FILENO;
 		}
+		
 		//write the header, version, member count
 		write(fd, TARASAUR_MAGIC_NUMBER, strlen(TARASAUR_MAGIC_NUMBER));
 		write(fd, &version, sizeof(version));
 		write(fd, &member_cnt, sizeof(member_cnt));
-		for (int i = optind; i < argc; ++i){
+		for (int i = 0; i < member_cnt; ++i){
 
-			mem_name = argv[i];
+			mem_name = members[i];
 			mem_fd = open(mem_name, O_RDONLY);
 			if(mem_fd < 0){
 				perror(mem_name);
@@ -155,12 +162,15 @@ int main(int argc, char *argv[]){
 			temp.crc32_data = 0;
 			temp.crc32_header = 0;
 			head.crc32_header = crc32(0L, (const Bytef *)&temp, (uInt)sizeof(temp));
-			write(fd, &head, sizeof(head));
-
-
+			headers[i] = head;
 			close(mem_fd);
 
 		}
+		for(int i =0; i< member_cnt; ++i){
+			write(fd, &headers[i], sizeof(headers[i]));
+		}
+		close(fd);
+		exit(EXIT_SUCCESS);
 
 	}
 	//if theres a filename set it to iarch
