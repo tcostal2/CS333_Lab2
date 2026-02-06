@@ -81,7 +81,7 @@ int main(int argc, char *argv[]){
 	}
 	//create archive
 	if(action == ACTION_CREATE){
-		int member_cnt = 0;
+		int member_cnt =0;
 		int mem_fd;
 		int fd;
 		const char* mem_name;
@@ -91,18 +91,23 @@ int main(int argc, char *argv[]){
 		unsigned char buffer[COPY_BUF_SIZE];
 		off_t data_offset;
 		uint32_t crc_data;
-		char* members[argc];
+		char** members;
+		off_t out =0;
 		tarasaur_directory_t head;
 		tarasaur_directory_t temp;
-		tarasaur_directory_t headers[argc];
+		tarasaur_directory_t* headers;
 
 		version = TARASAUR_VERSION;
-		for (int i = optind; i < argc; ++i){
-			if(argv[i][0] != '-'){
-				members[member_cnt] = argv[i];
-				++member_cnt;
-			}
+		member_cnt = argc - optind;
+
+		members = malloc(member_cnt * sizeof(*members));
+		headers = malloc(member_cnt * sizeof(*headers));
+
+		for(int i = 0; i < member_cnt; ++i){
+			members[i] = argv[optind +i];
 		}
+		
+
 		if(filename){
 			fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0664);
 			if(fd < 0){
@@ -116,8 +121,11 @@ int main(int argc, char *argv[]){
 		
 		//write the header, version, member count
 		write(fd, TARASAUR_MAGIC_NUMBER, strlen(TARASAUR_MAGIC_NUMBER));
+		out += strlen(TARASAUR_MAGIC_NUMBER);
 		write(fd, &version, sizeof(version));
+		out += sizeof(version);
 		write(fd, &member_cnt, sizeof(member_cnt));
+		out += sizeof(member_cnt);
 		for (int i = 0; i < member_cnt; ++i){
 
 			mem_name = members[i];
@@ -131,7 +139,14 @@ int main(int argc, char *argv[]){
 
 			//write the file size and offset
 			write(fd, &data_size, sizeof(data_size));
+
+			out += sizeof(data_size);
+
 			data_offset = lseek(fd, 0, SEEK_CUR);
+			if(data_offset == -1){
+				data_offset = out;
+			}
+			
 			//copy data members
 			crc_data = crc32(0L, Z_NULL, 0);
 			while((n= read(mem_fd, buffer, sizeof(buffer))) > 0) {
@@ -140,6 +155,7 @@ int main(int argc, char *argv[]){
 					perror("write");
 					exit(CREATE_FAIL);
 				}
+				out += n;
 			}
 			if(n <0){
 				perror("read");
@@ -168,107 +184,110 @@ int main(int argc, char *argv[]){
 		}
 		for(int i =0; i< member_cnt; ++i){
 			write(fd, &headers[i], sizeof(headers[i]));
+			out += sizeof(headers[i]);
 		}
-		close(fd);
+		//close(fd);
 		exit(EXIT_SUCCESS);
 
 	}
-	//if theres a filename set it to iarch
-	if(filename){
-		iarch = open(filename, O_RDONLY);
-		if (iarch < 0){
-			fprintf(stderr, "error msg 0\n");
-			exit(CREATE_FAIL);
-		}
-	}
 	else{
-		iarch = STDIN_FILENO;
-	}
-	//validate magic number
-	read(iarch, buf, strlen(TARASAUR_MAGIC_NUMBER));
-	if(strncmp(buf, TARASAUR_MAGIC_NUMBER, 
-				strlen(TARASAUR_MAGIC_NUMBER)) != 0){
-		fprintf(stderr, "Magic number doesnt match 1\n");
-		exit(BAD_MAGIC);
-	}
-	//validate version
-	read(iarch, &version, sizeof(version));
-	if(version != TARASAUR_VERSION){
-		fprintf(stderr, "version mismatch 2\n");
-		exit(BAD_MAGIC);
-	}
-	//small TOC and large TOC reading  
-	if(action == ACTION_TOC_SHORT || action == ACTION_TOC_LONG){
-		read(iarch, &num_members, sizeof(num_members));
-
-		for(int i = 0; i < num_members; ++i){
-			size_t data_size = 0;
-			read(iarch, &data_size, sizeof(data_size));
-			if(is_verbose){
-				fprintf(stderr, "\tskip over data %d of %zd bytes\n", i, data_size);
-			}
-			lseek(iarch, data_size, SEEK_CUR);
-		}
+		//if theres a filename set it to iarch
 		if(filename){
-			if(is_verbose) {printf("Reading archive file: " " %s\n", filename);}
-			printf("Table of contents of tarannosaurus file: "
-					"\"%s\" with %d members\n",
-					filename,
-					num_members);
+			iarch = open(filename, O_RDONLY);
+			if (iarch < 0){
+				fprintf(stderr, "error msg 0\n");
+				exit(CREATE_FAIL);
+			}
 		}
 		else{
-			printf("Table of contents tarannosaurus from" "stdin with %d members\n", num_members);
+			iarch = STDIN_FILENO;
 		}
-		for (int i =0; i <num_members; ++i){
-			char buffer[TARASAUR_MAX_NAME_LEN *2] ={'\0'};
-			tarasaur_directory_t header;
+		//validate magic number
+		read(iarch, buf, strlen(TARASAUR_MAGIC_NUMBER));
+		if(strncmp(buf, TARASAUR_MAGIC_NUMBER, 
+					strlen(TARASAUR_MAGIC_NUMBER)) != 0){
+			fprintf(stderr, "Magic number doesnt match 1\n");
+			exit(BAD_MAGIC);
+		}
+		//validate version
+		read(iarch, &version, sizeof(version));
+		if(version != TARASAUR_VERSION){
+			fprintf(stderr, "version mismatch 2\n");
+			exit(BAD_MAGIC);
+		}
+		//small TOC and large TOC reading  
+		if(action == ACTION_TOC_SHORT || action == ACTION_TOC_LONG){
+			read(iarch, &num_members, sizeof(num_members));
 
-			memset(buffer, 0, sizeof(buffer));
-			read(iarch, &header, sizeof(tarasaur_directory_t));
-			strncpy(buffer, header.tarasaur_name, TARASAUR_MAX_NAME_LEN);
-			printf("\tfile name: %s\n", buffer);
-			//logic for large TOC 
-			if(action == ACTION_TOC_LONG){
-				//file permissions
-				printf("\t\tmode:\t" );
-				printf("%c", S_ISDIR(header.tarasaur_mode) ? 'd' : '-');
-				printf("%c", (header.tarasaur_mode & S_IRUSR) ? 'r' : '-');
-				printf("%c", (header.tarasaur_mode & S_IWUSR) ? 'w' : '-');
-				printf("%c", (header.tarasaur_mode & S_IXUSR) ? 'x' : '-');
-
-				printf("%c", (header.tarasaur_mode & S_IRGRP) ? 'r' : '-');
-				printf("%c", (header.tarasaur_mode & S_IWGRP) ? 'w' : '-');
-				printf("%c", (header.tarasaur_mode & S_IXGRP) ? 'x' : '-');
-
-				printf("%c", (header.tarasaur_mode & S_IROTH) ? 'r' : '-');
-				printf("%c", (header.tarasaur_mode & S_IWOTH) ? 'w' : '-');
-				printf("%c", (header.tarasaur_mode & S_IXOTH) ? 'x' : '-');
-				printf("\n");
-				//userID
-				userid = getpwuid(header.tarasaur_uid);
-				if(userid == NULL) {printf("\tuser: \t%d\n", header.tarasaur_uid);}
-				printf("\t\tuser:\t\t%s\n", userid->pw_name);
-				//group
-				groupid = getgrgid(header.tarasaur_gid);
-				if(groupid == NULL) {printf("\tgroup: \t%d\n", header.tarasaur_gid);}
-				printf("\t\tgroup:\t\t%s\n", groupid->gr_name);
-				//size
-				printf("\t\tsize:\t\t%zu\n", header.tarasaur_size);
-				//mtime and atime
-				tm_mtime = localtime(&header.tarasaur_mtim.tv_sec);
-				strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S %Z", tm_mtime);
-				printf("\t\tmtime:\t\t%s\n", time_buf);
-				tm_atime = localtime(&header.tarasaur_atim.tv_sec);
-				strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S %Z", tm_atime);
-				printf("\t\tatime:\t\t%s\n", time_buf);
-				//crc32 checksums
-				printf("\t\tcrc32 header:\t\t0x%08x\n", header.crc32_header);
-				printf("\t\tcrc32 data:\t\t0x%08x\n", header.crc32_data);
-
+			for(int i = 0; i < num_members; ++i){
+				size_t data_size = 0;
+				read(iarch, &data_size, sizeof(data_size));
+				if(is_verbose){
+					fprintf(stderr, "\tskip over data %d of %zd bytes\n", i, data_size);
+				}
+				lseek(iarch, data_size, SEEK_CUR);
 			}
-		}
-		if (filename){
-			close(iarch);
+			if(filename){
+				if(is_verbose) {printf("Reading archive file: " " %s\n", filename);}
+				printf("Table of contents of tarannosaurus file: "
+						"\"%s\" with %d members\n",
+						filename,
+						num_members);
+			}
+			else{
+				printf("Table of contents tarannosaurus from" "stdin with %d members\n", num_members);
+			}
+			for (int i =0; i <num_members; ++i){
+				char buffer[TARASAUR_MAX_NAME_LEN *2] ={'\0'};
+				tarasaur_directory_t header;
+
+				memset(buffer, 0, sizeof(buffer));
+				read(iarch, &header, sizeof(tarasaur_directory_t));
+				strncpy(buffer, header.tarasaur_name, TARASAUR_MAX_NAME_LEN);
+				printf("\tfile name: %s\n", buffer);
+				//logic for large TOC 
+				if(action == ACTION_TOC_LONG){
+					//file permissions
+					printf("\t\tmode:\t" );
+					printf("%c", S_ISDIR(header.tarasaur_mode) ? 'd' : '-');
+					printf("%c", (header.tarasaur_mode & S_IRUSR) ? 'r' : '-');
+					printf("%c", (header.tarasaur_mode & S_IWUSR) ? 'w' : '-');
+					printf("%c", (header.tarasaur_mode & S_IXUSR) ? 'x' : '-');
+
+					printf("%c", (header.tarasaur_mode & S_IRGRP) ? 'r' : '-');
+					printf("%c", (header.tarasaur_mode & S_IWGRP) ? 'w' : '-');
+					printf("%c", (header.tarasaur_mode & S_IXGRP) ? 'x' : '-');
+
+					printf("%c", (header.tarasaur_mode & S_IROTH) ? 'r' : '-');
+					printf("%c", (header.tarasaur_mode & S_IWOTH) ? 'w' : '-');
+					printf("%c", (header.tarasaur_mode & S_IXOTH) ? 'x' : '-');
+					printf("\n");
+					//userID
+					userid = getpwuid(header.tarasaur_uid);
+					if(userid == NULL) {printf("\tuser: \t%d\n", header.tarasaur_uid);}
+					printf("\t\tuser:\t\t%s\n", userid->pw_name);
+					//group
+					groupid = getgrgid(header.tarasaur_gid);
+					if(groupid == NULL) {printf("\tgroup: \t%d\n", header.tarasaur_gid);}
+					printf("\t\tgroup:\t\t%s\n", groupid->gr_name);
+					//size
+					printf("\t\tsize:\t\t%zu\n", header.tarasaur_size);
+					//mtime and atime
+					tm_mtime = localtime(&header.tarasaur_mtim.tv_sec);
+					strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S %Z", tm_mtime);
+					printf("\t\tmtime:\t\t%s\n", time_buf);
+					tm_atime = localtime(&header.tarasaur_atim.tv_sec);
+					strftime(time_buf, sizeof(time_buf), "%Y-%m-%d %H:%M:%S %Z", tm_atime);
+					printf("\t\tatime:\t\t%s\n", time_buf);
+					//crc32 checksums
+					printf("\t\tcrc32 header:\t\t0x%08x\n", header.crc32_header);
+					printf("\t\tcrc32 data:\t\t0x%08x\n", header.crc32_data);
+
+				}
+			}
+			if (filename){
+				close(iarch);
+			}
 		}
 	}
 
